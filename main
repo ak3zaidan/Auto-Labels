@@ -1,0 +1,216 @@
+from audioop import error
+import pickle
+import os
+import base64
+import string 
+from googleapiclient.discovery import build
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+import email
+from apiclient import errors
+from webbrowser import Chrome
+from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+import time
+from selenium.webdriver.common.keys import Keys
+from random import randint, random, uniform
+from time import sleep
+from selenium.webdriver import ActionChains
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+import re
+import smtplib
+
+SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+
+class Info:
+    def __init__(self, address, name, item, city, state, zipcode):
+        self.address = address
+        self.name = name
+        self.item = item
+        self.city = city
+        self.state = state
+        self.zipcode = zipcode
+
+def get_driver():
+    options = Options()
+
+    prefs = {"credentials_enable_service": False,
+        "profile.password_manager_enabled": False}
+
+    options.add_experimental_option("prefs", prefs)
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
+    options.add_experimental_option('excludeSwitches', ['enable-logging'])
+    options.add_argument('--disable-blink-features=AutomationControlled')
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-popup-blocking")
+    options.add_argument("--disable-notifications")
+    options.add_argument("--start-maximized")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    userdatadir = 'C:/Users/zaida/AppData/Local/Google/Chrome/User Data'
+    options.add_argument(f"--user-data-dir={userdatadir}")
+
+    ser = Service("chromedriver.exe")
+    
+    driver = webdriver.Chrome(service=ser, options=options)
+
+    return driver
+
+def main():
+    driver = get_driver()
+    arr = getOrders(driver)
+    buy_shipping(arr, driver)
+
+def getOrders(driver):
+    shipping_info = []
+    orders = []
+    driver.get("https://sellercentral.amazon.com/orders-v3/mfn/unshipped?page=1")
+
+    orders_table = WebDriverWait(driver, 15).until(
+        EC.presence_of_element_located((By.ID, "orders-table")))
+    href_elements = orders_table.find_elements(By.TAG_NAME, "a")
+    for href_element in href_elements:
+        href = href_element.get_attribute("href")
+        if href and re.search(r'\d{5}$', href):
+            orders.append(href)
+
+    for link in orders:
+        driver.get(link)
+        try:
+            address_element = WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/div[2]/div/div/div[1]/div[1]/div/div[2]/div[2]/div/div/div/div/div[1]/table/tbody/tr[1]/td/span/span[3]/div/div"))
+            )
+            address_text = address_element.text
+
+            name = address_text.split("\n")[0]
+            address = address_text.split("\n")[1]
+            city_state_zip = address_text.split("\n")[2]
+            city, state = re.findall(r"^(.*), ([A-Z]{2})", city_state_zip)[0]
+            zipcode = re.findall(r"\d{5}-\d{4}|\d{5}", address_text)[-1]
+
+            item = driver.find_element(By.CLASS_NAME,'more-info-column-word-wrap-break-word').text
+            product = ""
+            if "Tech" in item:
+                product = "tech"
+            elif "Converse" in item:
+                product = "converse"
+            elif "Nike" in item:
+                product = "nike"
+            
+            info = Info(
+                address=address,
+                name=name,
+                item=product,
+                city=city,
+                state=state,
+                zipcode=zipcode
+            )
+            shipping_info.append(info)
+
+        except Exception as e:
+            print("Error extracting shipping information:", str(e))
+
+    return shipping_info
+
+def buy_shipping(array, driver):
+    for address in array:
+        driver.get("https://shipsnag.com/user/rate-quote/calculate")
+
+        x = 0
+        while x == 0:
+            try:
+                to_box = WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.ID, "receiver-address")))
+                to_box.click()
+                to_box.send_keys(address.address)
+                to_box.send_keys(", ")
+                to_box.send_keys(address.city)
+                to_box.send_keys(", ")
+                to_box.send_keys(address.state)
+                time.sleep(3) 
+                to_box.send_keys(Keys.ARROW_DOWN)
+                to_box.send_keys(Keys.ENTER)
+                
+                from_box = driver.find_element(By.ID,'shipper-address')
+                from_box.click()
+                from_box.send_keys("14955 SW Sophia Ln, Tigard, OR, USA")
+                time.sleep(3)
+                from_box.send_keys(Keys.ARROW_DOWN)
+                from_box.send_keys(Keys.ENTER)
+
+                weight = 3
+                length = 12
+                width = 8
+                height = 10
+                if address.item == "nike":
+                    weight = 4
+                    length = 15
+                    width = 12
+                    height = 10
+
+                weight_box = driver.find_element(By.ID,'weight_per_pckg')
+                weight_box.click()
+                weight_box.send_keys(weight)
+
+                length_box = driver.find_element(By.ID,'dim_length')
+                length_box.click()
+                length_box.send_keys(length)
+
+                width_box = driver.find_element(By.ID,'dim_width')
+                width_box.click()
+                width_box.send_keys(width)
+
+                height_box = driver.find_element(By.ID,'dim_height')
+                height_box.click()
+                height_box.send_keys(height)
+
+                submit = driver.find_element(By.XPATH,'/html/body/div[1]/div[2]/div/div[5]/div/div/div[2]/div/form/div/div[3]/div/div/button')
+                submit.click()
+            except:
+                x += 1
+        button = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, "/html/body/div/div[2]/div/div[5]/div/div/div[2]/div/div/div[2]/div/table/tbody/tr[1]/td[4]/form/input[24]")))
+        value = float(button.get_attribute('value').replace(' USD', ''))
+        if int(value) < 14:
+            print(value)
+            button.click()
+        else:
+            continue
+
+        company = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/div[2]/div/div[5]/div/div/div[2]/div/form/div[1]/div[2]/div[2]/div[2]/input")))
+        company.clear()
+        company.send_keys("Deals of Snkrs")
+
+        phone = driver.find_element(By.ID,'shipper_number')
+        phone.clear()
+        phone.send_keys("5035164365")
+
+        phoneSec = driver.find_element(By.ID,'receiver_number')
+        phoneSec.clear()
+        phoneSec.send_keys("5035164365")
+
+        recName = driver.find_element(By.XPATH,'/html/body/div[1]/div[2]/div/div[5]/div/div/div[2]/div/form/div[2]/div[2]/div/div[2]/div[2]/div/input')
+        recName.clear()
+        recName.send_keys(address.name)
+
+        phoneSec.click()
+        phoneSec.send_keys(Keys.ENTER)
+
+        pay = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, "/html/body/div/div[2]/div/div[5]/div/div/div[2]/div/div/div[3]/a")))
+        pay.click()
+        
+        time.sleep(30)
+    time.sleep(1000)
+if __name__ == '__main__':
+    main()
